@@ -1,0 +1,105 @@
+name: Artifact Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: artifact-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PYTHON_VERSION: "3.13"
+  ARTIFACT_NAME: lambda-artifacts
+
+jobs:
+  build-artifacts:
+    name: Build Trusted Release Artifacts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Sync Python workspace
+        run: uv sync --all-packages
+
+      - name: Verify workspace
+        run: npm run verify
+
+      - name: Generate release metadata
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          mapfile -t zip_files < <(find dist -maxdepth 1 -type f -name '*.zip' | sort)
+          if [[ "${#zip_files[@]}" -eq 0 ]]; then
+            echo "No Lambda zip artifacts were produced in dist/." >&2
+            exit 1
+          fi
+          sha256sum "${zip_files[@]}" > dist/checksums.txt
+          cat <<EOF > dist/release-metadata.json
+          {
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "commit_sha": "${GITHUB_SHA}",
+            "ref": "${GITHUB_REF}",
+            "generated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
+
+      - name: Upload Lambda artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            dist/*.zip
+            dist/checksums.txt
+            dist/release-metadata.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Write summary
+        run: |
+          {
+            echo "## Trusted Artifact Build"
+            echo ""
+            echo "- Source commit: \`${GITHUB_SHA}\`"
+            echo "- Artifact name: \`${ARTIFACT_NAME}\`"
+            echo "- Files:"
+            find dist -maxdepth 1 -type f -name '*.zip' -printf '  - `%f`\n' | sort
+            echo "  - \`dist/checksums.txt\`"
+            echo "  - \`dist/release-metadata.json\`"
+            echo ""
+            echo "### Checksums"
+            echo '```text'
+            cat dist/checksums.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,105 @@
+project     = "your-project"
+environment = "staging"
+region      = "us-east-1"
+
+service_version        = "0.1.0"
+api_version            = "v1"
+lambda_memory_mb       = 512
+lambda_timeout_seconds = 29
+worker_timeout_seconds = 180
+worker_batch_size      = 10
+log_retention_days     = 30
+cors_allow_origin      = "https://staging.example.com"
+
+rest_lambdas = {
+  rest = {
+    handler              = "skeleton_lambda_rest.handler.handler"
+    artifact_source_path = "../../../../dist/skeleton-lambda-rest.zip"
+    artifact_key         = "lambdas/rest.zip"
+    routes = [
+      {
+        route              = "GET /skeleton/health"
+        authorization_type = "NONE"
+      },
+      {
+        route              = "GET /skeleton/me"
+        authorization_type = "COGNITO"
+      },
+      {
+        route              = "GET /skeleton/admin"
+        authorization_type = "COGNITO"
+      },
+      {
+        route              = "GET /skeleton/private"
+        authorization_type = "AWS_IAM"
+      },
+    ]
+    dynamodb_table_access = ["app"]
+    s3_bucket_access      = ["primary"]
+  }
+}
+
+worker_lambdas = {
+  worker = {
+    handler               = "skeleton_lambda_worker.handler.handler"
+    artifact_source_path  = "../../../../dist/skeleton-lambda-worker.zip"
+    artifact_key          = "lambdas/worker.zip"
+    dynamodb_table_access = ["app"]
+    s3_bucket_access      = ["primary"]
+    queue = {
+      name                            = "your-project-staging-worker"
+      visibility_timeout_seconds      = 210
+      batch_size                      = 10
+      maximum_batching_window_seconds = 5
+      create_dlq                      = true
+      max_receive_count               = 3
+      dlq_message_retention_seconds   = 1209600
+    }
+  }
+}
+
+enable_cognito                = true
+cognito_user_pool_name        = "your-project-staging-users"
+cognito_user_pool_client_name = "your-project-staging-client"
+cognito_groups = {
+  admin = {
+    description = "Administrative users with elevated API access."
+    precedence  = 1
+  }
+}
+cognito_domain_prefix = "your-project-staging-auth"
+cognito_callback_urls = ["https://staging.example.com/api/auth/callback/cognito"]
+cognito_logout_urls   = ["https://staging.example.com"]
+
+dynamodb_tables = {
+  app = {
+    table_name = "your-project-staging-app"
+    hash_key   = "pk"
+    range_key  = "sk"
+    attributes = [
+      { name = "pk", type = "S" },
+      { name = "sk", type = "S" }
+    ]
+    billing_mode                  = "PAY_PER_REQUEST"
+    enable_point_in_time_recovery = true
+  }
+}
+
+s3_buckets = {
+  primary = {
+    bucket_name        = "your-project-staging-data-001"
+    force_destroy      = false
+    versioning_enabled = true
+    sse_algorithm      = "AES256"
+    bucket_key_enabled = true
+    lifecycle_rules    = []
+  }
+  artifacts = {
+    bucket_name        = "your-project-staging-lambda-artifacts-001"
+    force_destroy      = false
+    versioning_enabled = true
+    sse_algorithm      = "AES256"
+    bucket_key_enabled = true
+    lifecycle_rules    = []
+  }
+}

@@ -1,0 +1,200 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PYTHON_VERSION: "3.13"
+  TERRAFORM_VERSION: "1.9.8"
+
+jobs:
+  frontend:
+    name: Frontend Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Lint web app
+        run: npm run lint:web
+
+      - name: Typecheck web app
+        run: npm run typecheck:web
+
+      - name: Test web app
+        run: npm run test:web
+
+      - name: Build shared packages and web app
+        run: npm run build
+
+      - name: Write summary
+        run: |
+          {
+            echo "## Frontend Validation"
+            echo ""
+            echo "- Lint: passed"
+            echo "- Typecheck: passed"
+            echo "- Tests: passed"
+            echo "- Build: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  python:
+    name: Python Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Sync Python workspace
+        run: uv sync --all-packages
+
+      - name: Lint Python packages and services
+        run: npm run lint:python
+
+      - name: Typecheck Python services
+        run: npm run typecheck:python
+
+      - name: Test Python services
+        run: npm run test:python
+
+      - name: Write summary
+        run: |
+          {
+            echo "## Python Validation"
+            echo ""
+            echo "- Ruff checks: passed"
+            echo "- Mypy: passed"
+            echo "- Pytest: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  package-services:
+    name: Lambda Packaging Smoke Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Sync Python workspace
+        run: uv sync --all-packages
+
+      - name: Package Lambda services
+        run: npm run package:services
+
+      - name: Upload packaged Lambda zips
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-lambda-packages
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Write summary
+        run: |
+          {
+            echo "## Lambda Packaging Smoke Test"
+            echo ""
+            echo "- Packaged service bundles:"
+            find dist -maxdepth 1 -type f -name '*.zip' -printf '  - `%f`\n' | sort
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  terraform:
+    name: Terraform Validation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive infra/terraform
+
+      - name: Validate bootstrap and environments
+        run: |
+          set -euo pipefail
+
+          terraform -chdir=infra/terraform/bootstrap init -backend=false
+          terraform -chdir=infra/terraform/bootstrap validate
+
+          for environment in dev staging prod; do
+            cp "infra/terraform/environment/${environment}/terraform.tfvars.example" \
+              "infra/terraform/environment/${environment}/terraform.tfvars"
+            terraform -chdir="infra/terraform/environment/${environment}" init -backend=false
+            terraform -chdir="infra/terraform/environment/${environment}" validate
+            rm -f "infra/terraform/environment/${environment}/terraform.tfvars"
+          done
+
+      - name: Write summary
+        run: |
+          {
+            echo "## Terraform Validation"
+            echo ""
+            echo "- terraform fmt: passed"
+            echo "- bootstrap validate: passed"
+            echo "- dev validate: passed"
+            echo "- staging validate: passed"
+            echo "- prod validate: passed"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,20 @@
+name: Deploy Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: Artifact Build run ID to deploy, or 'latest'
+        required: false
+        default: latest
+        type: string
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/_deploy-environment.yml
+    with:
+      artifact_run_id: ${{ inputs.artifact_run_id }}
+      aws_region: ${{ vars.AWS_REGION != '' && vars.AWS_REGION || 'us-east-1' }}
+      aws_role_arn: ${{ vars.AWS_ROLE_ARN_STAGING }}
+      environment_name: staging
+      environment_path: infra/terraform/environment/staging

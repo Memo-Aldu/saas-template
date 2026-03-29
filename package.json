@@ -1,0 +1,56 @@
+{
+  "name": "saas-template",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Saas Template",
+  "homepage": "https://github.com/Memo-Aldu/saas-template#readme",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "services/*"
+  ],
+  "bugs": {
+    "url": "https://github.com/Memo-Aldu/saas-template/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Memo-Aldu/saas-template.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "build:packages": "npm --workspace packages/contracts run build && npm --workspace packages/ui run build",
+    "build:web": "npm --workspace apps/web run build",
+    "build": "npm run build:packages && npm run build:web",
+    "lint:web": "npm --workspace apps/web run lint",
+    "lint:python": "node scripts/run-uv.mjs run ruff check packages/python services",
+    "lint": "npm run lint:web && npm run lint:python",
+    "format": "npm --workspace apps/web run format",
+    "typecheck:web": "npm --workspace apps/web run typecheck",
+    "typecheck:python": "node scripts/run-python-services.mjs typecheck",
+    "typecheck": "npm run typecheck:web && npm run typecheck:python",
+    "test:web": "npm --workspace apps/web run test",
+    "test:python": "node scripts/run-python-services.mjs test",
+    "test": "npm run test:web && npm run test:python",
+    "package:services": "node scripts/run-python-services.mjs package",
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run build && npm run package:services",
+    "web:dev": "npm --workspace apps/web run dev"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2",
+    "prettier": "^3.8.1"
+  },
+  "lint-staged": {
+    "*.{json,css,md}": "prettier --write",
+    "*.{ts,tsx,js,jsx}": ["eslint --fix", "prettier --write"]
+  }
+}

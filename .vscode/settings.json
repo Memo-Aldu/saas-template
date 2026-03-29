@@ -1,0 +1,14 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "pylint.interpreter": ["${workspaceFolder}/.venv/Scripts/python.exe"],
+  "python.analysis.extraPaths": [
+    "packages/python/shared-core/src",
+    "packages/python/aws-utils/src",
+    "packages/python/domain-models/src",
+    "services/skeleton-lambda-rest/src",
+    "services/skeleton-lambda-worker/src"
+  ],
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["--rootdir", "."]
+}
+

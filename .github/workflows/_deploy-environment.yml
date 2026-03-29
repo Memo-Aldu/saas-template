@@ -1,0 +1,264 @@
+name: _Deploy Environment
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: Artifact name produced by artifact-build.yml
+        required: false
+        default: lambda-artifacts
+        type: string
+      artifact_run_id:
+        description: Specific artifact-build workflow run ID to deploy, or 'latest'
+        required: false
+        default: latest
+        type: string
+      aws_region:
+        description: AWS region for Terraform and OIDC credentials
+        required: true
+        type: string
+      aws_role_arn:
+        description: AWS IAM role ARN assumed via GitHub OIDC
+        required: true
+        type: string
+      environment_name:
+        description: Deployment environment name
+        required: true
+        type: string
+      environment_path:
+        description: Terraform root for the target environment
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ inputs.environment_name }}
+  cancel-in-progress: false
+
+env:
+  ARTIFACT_NAME: ${{ inputs.artifact_name }}
+  AWS_REGION: ${{ inputs.aws_region }}
+  ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+  ENVIRONMENT_PATH: ${{ inputs.environment_path }}
+  TERRAFORM_VERSION: "1.9.8"
+
+jobs:
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      artifact_run_id: ${{ steps.resolve-run.outputs.run_id }}
+      artifact_commit_sha: ${{ steps.metadata.outputs.commit_sha }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve artifact workflow run
+        id: resolve-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RUN_ID: ${{ inputs.artifact_run_id }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${REQUESTED_RUN_ID}" || "${REQUESTED_RUN_ID}" == "latest" ]]; then
+            run_id="$(
+              gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/artifact-build.yml/runs?branch=main&event=push&per_page=20" \
+                --jq '.workflow_runs[] | select(.conclusion == "success") | .id' | head -n 1
+            )"
+          else
+            run_id="${REQUESTED_RUN_ID}"
+          fi
+
+          if [[ -z "${run_id}" ]]; then
+            echo "Unable to resolve a successful artifact-build run." >&2
+            exit 1
+          fi
+
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+
+      - name: Download Lambda artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf .ci-artifacts
+          mkdir -p .ci-artifacts
+          gh run download "${{ steps.resolve-run.outputs.run_id }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "${ARTIFACT_NAME}" \
+            --dir .ci-artifacts
+
+      - name: Stage deployment bundles
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          mapfile -t zip_files < <(find .ci-artifacts -maxdepth 1 -type f -name '*.zip' | sort)
+          if [[ "${#zip_files[@]}" -eq 0 ]]; then
+            echo "No packaged Lambda artifacts were downloaded from artifact-build." >&2
+            exit 1
+          fi
+          cp "${zip_files[@]}" dist/
+
+      - name: Read artifact metadata
+        id: metadata
+        run: |
+          set -euo pipefail
+          if [[ -f .ci-artifacts/release-metadata.json ]]; then
+            commit_sha="$(jq -r '.commit_sha // empty' .ci-artifacts/release-metadata.json)"
+          else
+            commit_sha=""
+          fi
+          echo "commit_sha=${commit_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ inputs.aws_role_arn }}
+          role-session-name: gha-${{ inputs.environment_name }}-plan
+
+      - name: Terraform init
+        working-directory: ${{ env.ENVIRONMENT_PATH }}
+        run: terraform init -input=false
+
+      - name: Terraform plan
+        working-directory: ${{ env.ENVIRONMENT_PATH }}
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Render plan reports
+        working-directory: ${{ env.ENVIRONMENT_PATH }}
+        run: |
+          set -euo pipefail
+          terraform show -no-color tfplan > tfplan.txt
+          terraform show -json tfplan > tfplan.json
+          jq -r '
+            [
+              (.resource_changes // [])
+              | map(.change.actions)
+              | flatten
+              | group_by(.)
+              | map("\(.[0]): \(length)")
+            ] | .[]
+          ' tfplan.json > tfplan-summary.txt || true
+
+      - name: Upload reviewed deployment bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-bundle-${{ inputs.environment_name }}
+          path: |
+            ${{ env.ENVIRONMENT_PATH }}/tfplan
+            ${{ env.ENVIRONMENT_PATH }}/tfplan.txt
+            ${{ env.ENVIRONMENT_PATH }}/tfplan.json
+            ${{ env.ENVIRONMENT_PATH }}/tfplan-summary.txt
+            dist/*.zip
+            .ci-artifacts/checksums.txt
+            .ci-artifacts/release-metadata.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Write summary
+        working-directory: ${{ env.ENVIRONMENT_PATH }}
+        run: |
+          {
+            echo "## Terraform Plan (${ENVIRONMENT_NAME})"
+            echo ""
+            echo "- Artifact build run: \`${{ steps.resolve-run.outputs.run_id }}\`"
+            echo "- Artifact source commit: \`${{ steps.metadata.outputs.commit_sha || 'unknown' }}\`"
+            echo "- Terraform root: \`${ENVIRONMENT_PATH}\`"
+            echo "- Deployment bundles:"
+            find "${GITHUB_WORKSPACE}/dist" -maxdepth 1 -type f -name '*.zip' -printf '  - `%f`\n' | sort
+            echo ""
+            echo "### Change Summary"
+            if [[ -s tfplan-summary.txt ]]; then
+              while IFS= read -r line; do
+                echo "- ${line}"
+              done < tfplan-summary.txt
+            else
+              echo "- No resource action summary was generated."
+            fi
+            echo ""
+            echo "### Plan Preview"
+            echo '```text'
+            sed -n '1,200p' tfplan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    name: Terraform Apply
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment_name }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download reviewed Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-bundle-${{ inputs.environment_name }}
+          path: .
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ inputs.aws_role_arn }}
+          role-session-name: gha-${{ inputs.environment_name }}-apply
+
+      - name: Terraform init
+        working-directory: ${{ env.ENVIRONMENT_PATH }}
+        run: terraform init -input=false
+
+      - name: Terraform apply reviewed plan
+        working-directory: ${{ env.ENVIRONMENT_PATH }}
+        run: terraform apply -input=false tfplan
+
+      - name: Capture outputs
+        working-directory: ${{ env.ENVIRONMENT_PATH }}
+        run: terraform output -json > tfoutputs.json
+
+      - name: Upload apply outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ inputs.environment_name }}
+          path: ${{ env.ENVIRONMENT_PATH }}/tfoutputs.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Write summary
+        working-directory: ${{ env.ENVIRONMENT_PATH }}
+        run: |
+          {
+            echo "## Terraform Apply (${ENVIRONMENT_NAME})"
+            echo ""
+            echo "- Approved environment: \`${ENVIRONMENT_NAME}\`"
+            echo "- Artifact build run: \`${{ needs.plan.outputs.artifact_run_id }}\`"
+            echo "- Artifact source commit: \`${{ needs.plan.outputs.artifact_commit_sha || 'unknown' }}\`"
+            echo "- Applied reviewed bundle: \`deployment-bundle-${{ inputs.environment_name }}\`"
+            echo ""
+            echo "### Outputs"
+            echo '```json'
+            cat tfoutputs.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
