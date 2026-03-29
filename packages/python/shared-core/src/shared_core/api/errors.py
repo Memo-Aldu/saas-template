@@ -1,6 +1,7 @@
 """
 API error handling
 """
+from http import HTTPStatus
 
 from aws_lambda_powertools.event_handler import Response
 
@@ -43,7 +44,7 @@ def map_exception_to_response(exc: Exception) -> Response:
                 "message": exc.message,
                 "details": _normalize_error_details(exc.details),
             },
-            status_code=exc.status_code,
+            status_code=HTTPStatus(exc.status_code),
         )
 
     return json_response(
@@ -51,5 +52,5 @@ def map_exception_to_response(exc: Exception) -> Response:
             "code": "internal_server_error",
             "message": "An unexpected error occurred.",
         },
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
     )

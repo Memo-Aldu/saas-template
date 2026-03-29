@@ -1,7 +1,7 @@
 /**
  * Health-check endpoint contract.
  *
- * GET /health -> SuccessResponse whose data block matches HealthData.
+ * GET /skeleton/health -> SuccessResponse whose data block matches HealthData.
  */
 
 import { z } from "zod";

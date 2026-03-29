@@ -19,10 +19,10 @@ This service demonstrates the baseline REST setup for this template:
 
 ## Route included
 
-- `GET /health`
-- `GET /me` protected by Cognito
-- `GET /admin` protected by Cognito and an in-Lambda admin group check
-- `GET /private` protected by API Gateway IAM for service-to-service calls
+- `GET /skeleton/health`
+- `GET /skeleton/me` protected by Cognito
+- `GET /skeleton/admin` protected by Cognito and an in-Lambda admin group check
+- `GET /skeleton/private` protected by API Gateway IAM for service-to-service calls
 
 Response shape:
 
