@@ -9,12 +9,18 @@ on:
         default: latest
         type: string
 
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
 jobs:
   deploy:
     uses: ./.github/workflows/_deploy-environment.yml
+    secrets: inherit
     with:
       artifact_run_id: ${{ inputs.artifact_run_id }}
-      aws_region: ${{ vars.AWS_REGION != '' && vars.AWS_REGION || 'us-east-1' }}
+      aws_region: ${{ vars.AWS_REGION_DEV != '' && vars.AWS_REGION_DEV || 'us-east-1' }}
       aws_role_arn: ${{ vars.AWS_ROLE_ARN_DEV }}
       environment_name: dev
       environment_path: infra/terraform/environment/dev

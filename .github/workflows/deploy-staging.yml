@@ -9,12 +9,18 @@ on:
         default: latest
         type: string
 
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
 jobs:
   deploy:
     uses: ./.github/workflows/_deploy-environment.yml
+    secrets: inherit
     with:
       artifact_run_id: ${{ inputs.artifact_run_id }}
-      aws_region: ${{ vars.AWS_REGION != '' && vars.AWS_REGION || 'us-east-1' }}
+      aws_region: ${{ vars.AWS_REGION_STAGING != '' && vars.AWS_REGION_STAGING || 'us-east-1' }}
       aws_role_arn: ${{ vars.AWS_ROLE_ARN_STAGING }}
       environment_name: staging
       environment_path: infra/terraform/environment/staging

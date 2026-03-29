@@ -12,6 +12,7 @@ Use this docs set as the entry point for understanding the service shape and the
 - [Service Overview](./service/README.md)
 - [API And Flows](./service/api/README.md)
 - [CI/CD Setup](./ci-cd.md)
+- [End-to-End CI/CD Setup Guide](./cicd-setup-guide.md)
 
 ## Scope
 

@@ -71,7 +71,7 @@ jobs:
           if [[ -z "${REQUESTED_RUN_ID}" || "${REQUESTED_RUN_ID}" == "latest" ]]; then
             run_id="$(
               gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/artifact-build.yml/runs?branch=main&event=push&per_page=20" \
-                --jq '.workflow_runs[] | select(.conclusion == "success") | .id' | head -n 1
+                --jq 'first(.workflow_runs[] | select(.conclusion == "success") | .id) // empty'
             )"
           else
             run_id="${REQUESTED_RUN_ID}"
@@ -130,6 +130,64 @@ jobs:
           role-to-assume: ${{ inputs.aws_role_arn }}
           role-session-name: gha-${{ inputs.environment_name }}-plan
 
+      - name: Materialize Terraform variables
+        working-directory: ${{ env.ENVIRONMENT_PATH }}
+        env:
+          DEV_TFVARS_JSON: ${{ vars.DEV_TFVARS_JSON }}
+          STAGING_TFVARS_JSON: ${{ vars.STAGING_TFVARS_JSON }}
+          PROD_TFVARS_JSON: ${{ vars.PROD_TFVARS_JSON }}
+          DEV_TFVARS_SECRET_JSON: ${{ secrets.DEV_TFVARS_SECRET_JSON }}
+          STAGING_TFVARS_SECRET_JSON: ${{ secrets.STAGING_TFVARS_SECRET_JSON }}
+          PROD_TFVARS_SECRET_JSON: ${{ secrets.PROD_TFVARS_SECRET_JSON }}
+        run: |
+          set -euo pipefail
+
+          if [[ -f terraform.tfvars || -f terraform.tfvars.json || -f terraform.auto.tfvars || -f terraform.auto.tfvars.json ]]; then
+            echo "Using Terraform variable files already present in the workspace."
+            exit 0
+          fi
+
+          case "${ENVIRONMENT_NAME}" in
+            dev)
+              public_json="${DEV_TFVARS_JSON:-}"
+              secret_json="${DEV_TFVARS_SECRET_JSON:-}"
+              ;;
+            staging)
+              public_json="${STAGING_TFVARS_JSON:-}"
+              secret_json="${STAGING_TFVARS_SECRET_JSON:-}"
+              ;;
+            prod)
+              public_json="${PROD_TFVARS_JSON:-}"
+              secret_json="${PROD_TFVARS_SECRET_JSON:-}"
+              ;;
+            *)
+              echo "Unsupported environment name: ${ENVIRONMENT_NAME}" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ -z "${public_json}" && -z "${secret_json}" ]]; then
+            echo "No Terraform variable file is present and no environment-specific repository JSON config is configured for ${ENVIRONMENT_NAME}." >&2
+            exit 1
+          fi
+
+          if [[ -z "${public_json}" ]]; then
+            public_json='{}'
+          fi
+
+          if [[ -z "${secret_json}" ]]; then
+            secret_json='{}'
+          fi
+
+          printf '%s' "${public_json}" > .tfvars-public.json
+          printf '%s' "${secret_json}" > .tfvars-secret.json
+
+          jq -e 'type == "object"' .tfvars-public.json > /dev/null
+          jq -e 'type == "object"' .tfvars-secret.json > /dev/null
+          jq -s '.[0] * .[1]' .tfvars-public.json .tfvars-secret.json > terraform.auto.tfvars.json
+
+          rm -f .tfvars-public.json .tfvars-secret.json
+
       - name: Terraform init
         working-directory: ${{ env.ENVIRONMENT_PATH }}
         run: terraform init -input=false
@@ -163,6 +221,7 @@ jobs:
             ${{ env.ENVIRONMENT_PATH }}/tfplan.txt
             ${{ env.ENVIRONMENT_PATH }}/tfplan.json
             ${{ env.ENVIRONMENT_PATH }}/tfplan-summary.txt
+            ${{ env.ENVIRONMENT_PATH }}/terraform.auto.tfvars.json
             dist/*.zip
             .ci-artifacts/checksums.txt
             .ci-artifacts/release-metadata.json
