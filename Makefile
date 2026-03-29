@@ -12,6 +12,7 @@ DIST_DIR      := dist
 WHEELS_DIR    := $(DIST_DIR)/wheels
 UV_CACHE_DIR  := $(DIST_DIR)/.uv-cache
 LAMBDA_PLATFORM ?= manylinux2014_x86_64
+UV_LAMBDA_PLATFORM ?= x86_64-manylinux2014
 LAMBDA_PYTHON_VERSION ?= 3.13
 
 # Default
@@ -68,16 +69,16 @@ endif
 		--package $(SERVICE_NAME) \
 		-o $(STAGING)/requirements.txt
 	$(PYTHON) -c "from pathlib import Path; src=Path(r'$(STAGING)/requirements.txt'); dst=Path(r'$(STAGING)/requirements.external.txt'); lines=src.read_text(encoding='utf-8').splitlines(); keep=[]; [keep.append(line) for line in lines if not line.strip().startswith('./') and not line.strip().startswith('file://')]; dst.write_text('\n'.join(keep) + '\n', encoding='utf-8')"
-	$(PYTHON) -m pip install \
+	$(UV) pip install \
 		--quiet \
 		--require-hashes \
 		--only-binary=:all: \
-		--platform $(LAMBDA_PLATFORM) \
-		--implementation cp \
+		--python $(PYTHON) \
+		--python-platform $(UV_LAMBDA_PLATFORM) \
 		--python-version $(LAMBDA_PYTHON_VERSION) \
 		-r $(STAGING)/requirements.external.txt \
 		-t $(STAGING)
-	$(PYTHON) -c "import subprocess, sys; from pathlib import Path; req=Path(r'$(STAGING)/requirements.txt').read_text(encoding='utf-8').splitlines(); local_pkgs=[]; [local_pkgs.append(Path(line.strip()).name) for line in req if line.strip().startswith('./packages/python/') and Path(line.strip()).name not in local_pkgs]; cmd=[sys.executable, '-m', 'pip', 'install', '--quiet', '--no-deps', '--no-index', '--find-links', r'$(WHEELS_DIR)', '-t', r'$(STAGING)', *local_pkgs]; subprocess.check_call(cmd) if local_pkgs else None"
+	$(PYTHON) -c "import subprocess; from pathlib import Path; req=Path(r'$(STAGING)/requirements.txt').read_text(encoding='utf-8').splitlines(); local_pkgs=[]; [local_pkgs.append(Path(line.strip()).name) for line in req if line.strip().startswith('./packages/python/') and Path(line.strip()).name not in local_pkgs]; cmd=[r'$(UV)', 'pip', 'install', '--quiet', '--python', r'$(PYTHON)', '--no-deps', '--no-index', '--find-links', r'$(WHEELS_DIR)', '-t', r'$(STAGING)', *local_pkgs]; subprocess.check_call(cmd) if local_pkgs else None"
 	$(PYTHON) -c "import shutil; from pathlib import Path; src=Path(r'$(SERVICE)') / 'src'; dst=Path(r'$(STAGING)'); [shutil.copytree(p, dst / p.name, dirs_exist_ok=True) if p.is_dir() else shutil.copy2(p, dst / p.name) for p in src.iterdir()]"
 	$(PYTHON) -c "import shutil; from pathlib import Path; root=Path(r'$(STAGING)'); [shutil.rmtree(p, ignore_errors=True) for p in root.rglob('__pycache__') if p.is_dir()]; [shutil.rmtree(p, ignore_errors=True) for p in root.rglob('tests') if p.is_dir()]; [shutil.rmtree(p, ignore_errors=True) for p in root.rglob('test') if p.is_dir()]; [p.unlink(missing_ok=True) for p in root.rglob('*.pyc') if p.is_file()]; [p.unlink(missing_ok=True) for p in root.rglob('*.pyo') if p.is_file()]"
 	$(PYTHON) -c "from pathlib import Path; [Path(r'$(STAGING)', name).unlink(missing_ok=True) for name in ('requirements.txt', 'requirements.external.txt')]"
