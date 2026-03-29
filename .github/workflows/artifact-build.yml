@@ -1,4 +1,4 @@
-name: Artifact Build
+name: Build Artifacts
 
 on:
   push:
@@ -19,7 +19,7 @@ env:
 
 jobs:
   build-artifacts:
-    name: Build Trusted Release Artifacts
+    name: Build Artifacts
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -89,7 +89,7 @@ jobs:
       - name: Write summary
         run: |
           {
-            echo "## Trusted Artifact Build"
+            echo "## Artifact Build"
             echo ""
             echo "- Source commit: \`${GITHUB_SHA}\`"
             echo "- Artifact name: \`${ARTIFACT_NAME}\`"
